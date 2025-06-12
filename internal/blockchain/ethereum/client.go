@@ -20,5 +20,6 @@ func NewClient(url string) *Client {
 }
 
 func GetClient() *Client {
-	return NewClient("https://mainnet.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161")
+	// 使用 Ankr 的公共节点，它通常更稳定
+	return NewClient("https://eth.llamarpc.com")
 }
