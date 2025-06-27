@@ -98,18 +98,40 @@ func Transfer(client *Client, toAddress string, amount int) (string, error) {
 	}
 
 	value := big.NewInt(int64(amount)) // in wei (1 eth)
-    gasLimit := uint64(21000)                // in units
-    gasPrice, err := client.Client.SuggestGasPrice(context.Background())
-    if err != nil {
-        return "", err
-    }
-
-	tx := types.NewTransaction(nonce, common.HexToAddress(toAddress), value, gasLimit, gasPrice, nil)
-
+    gasLimit := uint64(21000)
 	chainID, err := client.Client.ChainID(context.Background())
 	if err != nil {
 		return "", err
+	}                // in units
+    // gasPrice, err := client.Client.SuggestGasPrice(context.Background())
+    // if err != nil {
+    //     return "", err
+    // }
+
+	// tx := types.NewTransaction(nonce, common.HexToAddress(toAddress), value, gasLimit, gasPrice, nil)
+	// 获取 baseFee (需支持 EIP-1559 的节点)
+	header, err := client.Client.HeaderByNumber(context.Background(), nil)
+	if err != nil {
+		return "", fmt.Errorf("get latest block header failed: %w", err)
 	}
+	baseFee := header.BaseFee
+
+	// 设置 MaxPriorityFee 和 MaxFeePerGas（MaxFee >= BaseFee + Priority）
+	maxPriorityFee := big.NewInt(2e9) // 2 Gwei
+	maxFee := new(big.Int).Add(baseFee, maxPriorityFee)
+	to :=common.HexToAddress(toAddress)
+
+	// 构造 EIP-1559 类型交易
+	tx := types.NewTx(&types.DynamicFeeTx{
+		ChainID:   chainID,
+		Nonce:     nonce,
+		GasTipCap: maxPriorityFee, // priority fee（小费）
+		GasFeeCap: maxFee,         // max total fee
+		Gas:       gasLimit,
+		To:        &to,	
+		Value:     value,
+		Data:      nil,
+	})
 
 	signer := types.NewEIP155Signer(chainID)
 	signedTx, err := types.SignTx(tx, signer, privateKey)
