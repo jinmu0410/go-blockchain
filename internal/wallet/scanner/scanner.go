@@ -49,6 +49,16 @@ func (f *RPCBlockFetcher) GetBlockByHeight(ctx context.Context, height uint64) (
 	}, nil
 }
 
+// ScannerStatus 扫描器状态
+type ScannerStatus struct {
+	Chain         domain.ChainType `json:"chain"`
+	IsRunning     bool             `json:"is_running"`
+	CurrentHeight uint64           `json:"current_height"`
+	LatestHeight  uint64           `json:"latest_height"`
+	IsHealthy     bool             `json:"is_healthy"`
+	ErrorMessage  string           `json:"error_message,omitempty"`
+}
+
 // Scanner 区块链扫描器接口
 type Scanner interface {
 	Chain() domain.ChainType
@@ -56,4 +66,6 @@ type Scanner interface {
 	Subscribe(ctx context.Context, handler DepositHandler, reorgHandler ReorgHandler) error
 	// SetBlockFetcher 设置区块获取器（用于重组检测）
 	SetBlockFetcher(fetcher BlockFetcher)
+	// GetStatus 获取扫描器状态（用于健康检查）
+	GetStatus(ctx context.Context) ScannerStatus
 }

@@ -53,6 +53,7 @@ const (
 // DepositRecord 表示一笔充值
 type DepositRecord struct {
 	TxHash                string
+	UserID                string // 用户ID（通过ToAddress查找账户获得）
 	Chain                 ChainType
 	AssetSymbol           string
 	Amount                *big.Int

@@ -5,17 +5,18 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/ethereum/go-ethereum"
 	"github.com/jinmu/go-blockchain/internal/wallet/domain"
 )
 
 // EVMClient EVM 链 RPC 客户端实现
 type EVMClient struct {
-	client *ethclient.Client
-	chain  domain.ChainType
+	client      *ethclient.Client
+	chain       domain.ChainType
+	erc20Parser *ERC20Parser
 }
 
 // NewEVMClient 创建 EVM 链客户端
@@ -25,9 +26,11 @@ func NewEVMClient(endpoint string) (*EVMClient, error) {
 		return nil, fmt.Errorf("failed to connect to EVM node: %w", err)
 	}
 
+	erc20Parser := NewERC20Parser(client)
 	return &EVMClient{
-		client: client,
-		chain:  domain.ChainEVM,
+		client:      client,
+		chain:       domain.ChainEVM,
+		erc20Parser: erc20Parser,
 	}, nil
 }
 
@@ -177,11 +180,11 @@ func (c *EVMClient) EstimateGas(ctx context.Context, from, to string, value *big
 	priorityFee := big.NewInt(2000000000) // 2 Gwei 默认值
 
 	return &GasEstimation{
-		BaseFeePerGas:    baseFee,
+		BaseFeePerGas:     baseFee,
 		PriorityFeePerGas: priorityFee,
-		MaxFeePerGas:     new(big.Int).Add(baseFee, priorityFee),
-		GasLimit:         gasLimit,
-		BlockNumber:      header.Number.Uint64(),
+		MaxFeePerGas:      new(big.Int).Add(baseFee, priorityFee),
+		GasLimit:          gasLimit,
+		BlockNumber:       header.Number.Uint64(),
 	}, nil
 }
 
@@ -249,3 +252,73 @@ func (c *EVMClient) GetTransactionReceipt(ctx context.Context, txHash string) (*
 	}, nil
 }
 
+// GetLatestBlockHeight 获取最新区块高度
+func (c *EVMClient) GetLatestBlockHeight(ctx context.Context) (uint64, error) {
+	block, err := c.client.BlockByNumber(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get latest block: %w", err)
+	}
+	return block.Number().Uint64(), nil
+}
+
+// GetBlockTransactions 获取区块中的所有交易
+func (c *EVMClient) GetBlockTransactions(ctx context.Context, height uint64) ([]Transaction, error) {
+	block, err := c.client.BlockByNumber(ctx, big.NewInt(int64(height)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get block: %w", err)
+	}
+
+	var transactions []Transaction
+	for _, tx := range block.Transactions() {
+		// 获取交易回执
+		receipt, err := c.client.TransactionReceipt(ctx, tx.Hash())
+		if err != nil {
+			// 如果获取回执失败，跳过该交易
+			continue
+		}
+
+		// 获取发送者地址
+		from, err := c.client.TransactionSender(ctx, tx, receipt.BlockHash, receipt.TransactionIndex)
+		if err != nil {
+			continue
+		}
+
+		transaction := Transaction{
+			Hash:    tx.Hash().Hex(),
+			From:    from.Hex(),
+			Success: receipt.Status == 1,
+			GasUsed: receipt.GasUsed,
+		}
+
+		if tx.To() != nil {
+			transaction.To = tx.To().Hex()
+		}
+
+		if tx.Value() != nil {
+			transaction.Value = tx.Value()
+		}
+
+		// 解析 ERC20 Transfer 事件（从 logs 中解析）
+		if c.erc20Parser != nil && len(receipt.Logs) > 0 {
+			transfers, err := c.erc20Parser.ParseTransferEvents(ctx, tx.Hash().Hex())
+			if err == nil && len(transfers) > 0 {
+				// 保存所有 Transfer 事件
+				transaction.TokenTransfers = transfers
+				// 为了向后兼容，保留第一个作为 TokenTransfer
+				transaction.TokenTransfer = transfers[0]
+			}
+		}
+
+		transactions = append(transactions, transaction)
+	}
+
+	return transactions, nil
+}
+
+// ClearERC20Cache 清除 ERC20 代币信息缓存
+// 在区块重组发生时调用，确保缓存数据的一致性
+func (c *EVMClient) ClearERC20Cache() {
+	if c.erc20Parser != nil {
+		c.erc20Parser.ClearCache()
+	}
+}

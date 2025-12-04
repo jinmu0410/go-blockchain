@@ -73,3 +73,18 @@ func (c *SolanaClient) SendRawTransaction(ctx context.Context, rawTx []byte) (st
 func (c *SolanaClient) GetTransactionReceipt(ctx context.Context, txHash string) (*TransactionInfo, error) {
 	return nil, fmt.Errorf("not implemented")
 }
+
+// GetLatestBlockHeight 获取最新区块高度
+func (c *SolanaClient) GetLatestBlockHeight(ctx context.Context) (uint64, error) {
+	block, err := c.GetLatestBlock(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return block.Height, nil
+}
+
+// GetBlockTransactions 获取区块中的所有交易
+func (c *SolanaClient) GetBlockTransactions(ctx context.Context, height uint64) ([]Transaction, error) {
+	// TODO: 实现 Solana 交易解析
+	return []Transaction{}, fmt.Errorf("solana block transactions not implemented")
+}

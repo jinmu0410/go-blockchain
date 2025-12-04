@@ -31,6 +31,21 @@ type BalanceRepository interface {
 	GetBalance(ctx context.Context, userID, asset string) (domain.Balance, error)
 }
 
+// DepositStatistics 充值统计信息
+type DepositStatistics struct {
+	TotalCount   int64   `json:"total_count"`
+	TotalAmount  string  `json:"total_amount"` // 使用字符串避免精度丢失
+	ByAsset      map[string]AssetStatistics `json:"by_asset"`
+	ByStatus     map[string]int64           `json:"by_status"`
+	ByChain      map[string]int64           `json:"by_chain"`
+}
+
+// AssetStatistics 资产统计
+type AssetStatistics struct {
+	Count  int64  `json:"count"`
+	Amount string `json:"amount"`
+}
+
 // DepositRepository 保存充值记录
 type DepositRepository interface {
 	SaveDeposit(ctx context.Context, userID string, record domain.DepositRecord) error
@@ -38,6 +53,10 @@ type DepositRepository interface {
 	UpdateDeposit(ctx context.Context, record domain.DepositRecord) error
 	// FindDepositsByBlockRange 查找指定区块范围内的充值记录（用于重组回滚）
 	FindDepositsByBlockRange(ctx context.Context, chain domain.ChainType, fromHeight, toHeight uint64) ([]domain.DepositRecord, error)
+	// ListDeposits 查询充值记录，支持按userID、assetSymbol、status过滤
+	ListDeposits(ctx context.Context, userID, assetSymbol string, status domain.DepositStatus, limit, offset int) ([]domain.DepositRecord, error)
+	// GetDepositStatistics 获取充值统计信息
+	GetDepositStatistics(ctx context.Context, startTime, endTime *time.Time) (DepositStatistics, error)
 }
 
 // WithdrawalRepository 保存提现请求

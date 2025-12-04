@@ -72,3 +72,18 @@ func (c *BitcoinClient) SendRawTransaction(ctx context.Context, rawTx []byte) (s
 func (c *BitcoinClient) GetTransactionReceipt(ctx context.Context, txHash string) (*TransactionInfo, error) {
 	return nil, fmt.Errorf("bitcoin does not support transaction receipt")
 }
+
+// GetLatestBlockHeight 获取最新区块高度
+func (c *BitcoinClient) GetLatestBlockHeight(ctx context.Context) (uint64, error) {
+	block, err := c.GetLatestBlock(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return block.Height, nil
+}
+
+// GetBlockTransactions 获取区块中的所有交易
+func (c *BitcoinClient) GetBlockTransactions(ctx context.Context, height uint64) ([]Transaction, error) {
+	// TODO: 实现 Bitcoin 交易解析
+	return []Transaction{}, fmt.Errorf("bitcoin block transactions not implemented")
+}

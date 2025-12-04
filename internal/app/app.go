@@ -6,8 +6,11 @@ import (
 	"log"
 
 	"github.com/jinmu/go-blockchain/internal/config"
+	"github.com/jinmu/go-blockchain/internal/wallet/deposit"
+	"github.com/jinmu/go-blockchain/internal/wallet/notification"
 	"github.com/jinmu/go-blockchain/internal/wallet/rpc"
 	"github.com/jinmu/go-blockchain/internal/wallet/risk"
+	"github.com/jinmu/go-blockchain/internal/wallet/scanner"
 	"github.com/jinmu/go-blockchain/internal/wallet/service"
 	"github.com/jinmu/go-blockchain/internal/wallet/signer"
 	"github.com/jinmu/go-blockchain/internal/wallet/store"
@@ -51,15 +54,35 @@ func NewApp(cfg *config.Config) (*App, error) {
 	}
 
 	// 4. 初始化风控
-	riskController := &risk.NoopController{}
+	var riskController risk.Controller
+	if cfg.Database.Type == "memory" {
+		// 使用默认风控（开发测试）
+		riskController = &risk.NoopController{}
+	} else {
+		// 使用完整风控系统
+		riskController = risk.NewRiskController(store, nil)
+	}
 
-	// 5. 初始化 Manager
-	manager := service.NewManager(store,
+	// 5. 初始化通知管理器（可选）
+	var notifierManager *notification.Manager
+	if cfg.Database.Type != "memory" {
+		// 生产环境启用通知
+		webhookNotifier := notification.NewWebhookNotifier()
+		configStore := notification.NewInMemoryConfigStore() // 可以替换为数据库存储
+		notifierManager = notification.NewManager(webhookNotifier, configStore)
+	}
+
+	// 6. 初始化 Manager
+	managerOpts := []service.Option{
 		service.WithRiskController(riskController),
 		service.WithSigner(signer),
-	)
+	}
+	if notifierManager != nil {
+		managerOpts = append(managerOpts, service.WithNotifier(notifierManager))
+	}
+	manager := service.NewManager(store, managerOpts...)
 
-	// 6. 注册默认资产
+	// 7. 注册默认资产
 	if err := registerDefaultAssets(context.Background(), manager); err != nil {
 		return nil, fmt.Errorf("failed to register default assets: %w", err)
 	}
@@ -77,9 +100,56 @@ func NewApp(cfg *config.Config) (*App, error) {
 
 // StartDepositListeners 启动充值监听器
 func (a *App) StartDepositListeners(ctx context.Context) error {
-	// TODO: 实现扫描器并启动监听
-	// 这里需要根据配置创建扫描器并注册到 Manager
-	log.Println("Deposit listeners started (placeholder)")
+	// 为每个链创建扫描器
+	for chainType, rpcClient := range a.RPC {
+		var sc scanner.Scanner
+		var confirmations, reorgDepth uint64
+
+		// 根据链类型创建对应的扫描器
+		switch chainType {
+		case domain.ChainEVM:
+			confirmations = 12
+			reorgDepth = 12
+			sc = scanner.NewEVMScanner(chainType, rpcClient, a.Store, confirmations, reorgDepth)
+		case domain.ChainBitcoin:
+			confirmations = 6
+			reorgDepth = 6
+			sc = scanner.NewBitcoinScanner(chainType, rpcClient, a.Store, confirmations, reorgDepth)
+		case domain.ChainSolana:
+			confirmations = 32
+			reorgDepth = 32
+			sc = scanner.NewSolanaScanner(chainType, rpcClient, a.Store, confirmations, reorgDepth)
+		default:
+			log.Printf("Unsupported chain type: %s, skipping scanner", chainType)
+			continue
+		}
+
+		// 注册扫描器
+		a.Manager.RegisterScanner(sc)
+
+		// 启动扫描
+		depositHandler := func(ctx context.Context, event domain.DepositEvent) error {
+			return a.Manager.HandleDepositEvent(ctx, event)
+		}
+
+		reorgHandler := func(ctx context.Context, chain domain.ChainType, fromHeight, toHeight uint64) error {
+			// 使用 Manager 的 RollbackDeposit 方法处理重组
+			reorgHandler := deposit.NewDefaultReorgHandlerWithConfig(
+				a.Store,
+				a.Manager,
+				nil, // Ledger（可选）
+				deposit.DefaultReorgDepths,
+			)
+			return reorgHandler.OnReorg(ctx, chain, fromHeight, toHeight)
+		}
+
+		if err := sc.Subscribe(ctx, depositHandler, reorgHandler); err != nil {
+			return fmt.Errorf("failed to start scanner for %s: %w", chainType, err)
+		}
+
+		log.Printf("Deposit listener started for chain: %s (confirmations: %d, reorg_depth: %d)", chainType, confirmations, reorgDepth)
+	}
+
 	return nil
 }
 

@@ -39,6 +39,12 @@ type Client interface {
 
 	// GetTransactionReceipt 获取交易回执
 	GetTransactionReceipt(ctx context.Context, txHash string) (*TransactionInfo, error)
+
+	// GetLatestBlockHeight 获取最新区块高度
+	GetLatestBlockHeight(ctx context.Context) (uint64, error)
+
+	// GetBlockTransactions 获取区块中的所有交易
+	GetBlockTransactions(ctx context.Context, height uint64) ([]Transaction, error)
 }
 
 // ClientFactory RPC 客户端工厂

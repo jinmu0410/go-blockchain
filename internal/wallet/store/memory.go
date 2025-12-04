@@ -232,6 +232,10 @@ func (s *InMemoryStore) SaveDeposit(ctx context.Context, userID string, record d
 	if record.ObservedAt.IsZero() {
 		record.ObservedAt = time.Now()
 	}
+	// 确保UserID被设置
+	if record.UserID == "" {
+		record.UserID = userID
+	}
 	if _, ok := s.deposits[record.TxHash]; ok {
 		return nil
 	}
@@ -315,6 +319,120 @@ func (s *InMemoryStore) FindDepositsByBlockRange(ctx context.Context, chain doma
 		}
 	}
 	return results, nil
+}
+
+// ListDeposits implements DepositRepository
+func (s *InMemoryStore) ListDeposits(ctx context.Context, userID, assetSymbol string, status domain.DepositStatus, limit, offset int) ([]domain.DepositRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	results := make([]domain.DepositRecord, 0)
+
+	// 遍历所有充值记录，应用过滤条件
+	for _, record := range s.deposits {
+		// 按userID过滤
+		if userID != "" && record.UserID != userID {
+			continue
+		}
+		// 按assetSymbol过滤
+		if assetSymbol != "" && record.AssetSymbol != assetSymbol {
+			continue
+		}
+		// 按status过滤
+		if status != "" && record.Status != status {
+			continue
+		}
+
+		results = append(results, record)
+	}
+
+	// 按ObservedAt倒序排序（最新的在前）
+	for i := 0; i < len(results)-1; i++ {
+		for j := i + 1; j < len(results); j++ {
+			if results[i].ObservedAt.Before(results[j].ObservedAt) {
+				results[i], results[j] = results[j], results[i]
+			}
+		}
+	}
+
+	// 应用分页
+	if offset > len(results) {
+		return []domain.DepositRecord{}, nil
+	}
+	end := offset + limit
+	if end > len(results) {
+		end = len(results)
+	}
+	if limit <= 0 {
+		end = len(results) // 如果没有限制，返回所有结果
+	}
+
+	return results[offset:end], nil
+}
+
+// GetDepositStatistics implements DepositRepository
+func (s *InMemoryStore) GetDepositStatistics(ctx context.Context, startTime, endTime *time.Time) (DepositStatistics, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	stats := DepositStatistics{
+		TotalCount:  0,
+		TotalAmount: "0",
+		ByAsset:     make(map[string]AssetStatistics),
+		ByStatus:    make(map[string]int64),
+		ByChain:     make(map[string]int64),
+	}
+
+	totalAmount := big.NewInt(0)
+	assetAmounts := make(map[string]*big.Int)
+	assetCounts := make(map[string]int64)
+
+	for _, record := range s.deposits {
+		// 时间过滤
+		if startTime != nil && record.ObservedAt.Before(*startTime) {
+			continue
+		}
+		if endTime != nil && record.ObservedAt.After(*endTime) {
+			continue
+		}
+
+		// 统计总数
+		stats.TotalCount++
+
+		// 统计总金额
+		if record.Amount != nil {
+			totalAmount = new(big.Int).Add(totalAmount, record.Amount)
+		}
+
+		// 按资产统计
+		if _, ok := assetAmounts[record.AssetSymbol]; !ok {
+			assetAmounts[record.AssetSymbol] = big.NewInt(0)
+			assetCounts[record.AssetSymbol] = 0
+		}
+		if record.Amount != nil {
+			assetAmounts[record.AssetSymbol] = new(big.Int).Add(assetAmounts[record.AssetSymbol], record.Amount)
+		}
+		assetCounts[record.AssetSymbol]++
+
+		// 按状态统计
+		stats.ByStatus[string(record.Status)]++
+
+		// 按链统计
+		stats.ByChain[string(record.Chain)]++
+	}
+
+	// 设置总金额
+	stats.TotalAmount = totalAmount.String()
+
+	// 设置按资产统计
+	for asset, amount := range assetAmounts {
+		stats.ByAsset[asset] = AssetStatistics{
+			Count:  assetCounts[asset],
+			Amount: amount.String(),
+		}
+	}
+
+	return stats, nil
 }
 
 func (s *InMemoryStore) blockKey(chain domain.ChainType, height uint64) string {

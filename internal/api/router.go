@@ -28,7 +28,9 @@ func (r *Router) SetupRoutes() *gin.Engine {
 	router.Use(corsMiddleware())
 
 	// 健康检查
-	router.GET("/health", healthCheck)
+	router.GET("/health", func(c *gin.Context) {
+		r.healthCheck(c)
+	})
 
 	// API v1
 	v1 := router.Group("/api/v1")
@@ -38,6 +40,36 @@ func (r *Router) SetupRoutes() *gin.Engine {
 		r.setupBalanceRoutes(v1)
 		r.setupDepositRoutes(v1)
 		r.setupWithdrawalRoutes(v1)
+		r.setupRiskRoutes(v1)
+	}
+
+	// 认证路由（必须在静态文件之前）
+	auth := router.Group("/admin/api")
+	{
+		authHandler := handlers.NewAuthHandler()
+		auth.POST("/login", authHandler.Login)
+	}
+
+	// Admin API（需要认证）
+	admin := router.Group("/admin/api/v1")
+	admin.Use(handlers.VerifyToken())
+	{
+		r.setupAdminRoutes(admin)
+	}
+
+	// 静态文件服务（管理后台前端）
+	// 使用单独的路径避免与 API 路由冲突
+	adminGroup := router.Group("/admin")
+	{
+		// 首页
+		adminGroup.GET("", func(c *gin.Context) {
+			c.File("./web/admin/index.html")
+		})
+		adminGroup.GET("/", func(c *gin.Context) {
+			c.File("./web/admin/index.html")
+		})
+		// 静态资源（CSS、JS 等）
+		adminGroup.Static("/static", "./web/admin")
 	}
 
 	return router
@@ -95,12 +127,93 @@ func (r *Router) setupWithdrawalRoutes(group *gin.RouterGroup) {
 	}
 }
 
+// setupRiskRoutes 设置风控路由
+func (r *Router) setupRiskRoutes(group *gin.RouterGroup) {
+	handler := handlers.NewRiskHandler(r.manager)
+	risk := group.Group("/risk")
+	{
+		// 白名单管理
+		risk.POST("/whitelist", handler.AddToWhitelist)
+		risk.DELETE("/whitelist/:address", handler.RemoveFromWhitelist)
+		risk.GET("/whitelist", handler.ListWhitelist)
+		
+		// 黑名单管理
+		risk.POST("/blacklist", handler.AddToBlacklist)
+		risk.DELETE("/blacklist/:address", handler.RemoveFromBlacklist)
+		risk.GET("/blacklist", handler.ListBlacklist)
+		
+		// 配置管理
+		risk.GET("/config", handler.GetRiskConfig)
+		risk.PUT("/config", handler.UpdateRiskConfig)
+		
+		// 日志查询
+		risk.GET("/logs", handler.ListRiskLogs)
+	}
+}
+
+// setupAdminRoutes 设置后台管理路由
+func (r *Router) setupAdminRoutes(group *gin.RouterGroup) {
+	handler := handlers.NewAdminHandler(r.manager)
+	
+	// 交易管理
+	transactions := group.Group("/transactions")
+	{
+		transactions.GET("/deposits", handler.ListDeposits)
+		transactions.GET("/deposits/:tx_hash", handler.GetDeposit)
+		transactions.POST("/deposits/:tx_hash/credit", handler.ManualCreditDeposit)
+		
+		transactions.GET("/withdrawals", handler.ListWithdrawals)
+		transactions.GET("/withdrawals/:id", handler.GetWithdrawal)
+		transactions.POST("/withdrawals/:id/approve", handler.ApproveWithdrawal)
+		transactions.POST("/withdrawals/:id/reject", handler.RejectWithdrawal)
+	}
+	
+	// 账号管理
+	accounts := group.Group("/accounts")
+	{
+		accounts.GET("", handler.ListAccounts)
+		accounts.GET("/:user_id/:asset_symbol", handler.GetAccount)
+		accounts.GET("/:user_id/:asset_symbol/balance", handler.GetBalance)
+		accounts.POST("/balance/adjust", handler.AdjustBalance)
+	}
+	
+	// 资产管理
+	assets := group.Group("/assets")
+	{
+		assets.GET("", handler.ListAssets)
+		assets.POST("", handler.RegisterAsset)
+	}
+	
+	// 统计信息
+	group.GET("/statistics", handler.GetStatistics)
+}
+
 // healthCheck 健康检查
-func healthCheck(c *gin.Context) {
-	c.JSON(200, gin.H{
+func (r *Router) healthCheck(c *gin.Context) {
+	response := gin.H{
 		"status":  "ok",
 		"service": "wallet-api",
-	})
+	}
+	
+	// 获取扫描器状态
+	scannerStatuses := r.manager.GetScannerStatuses(c.Request.Context())
+	if len(scannerStatuses) > 0 {
+		response["scanners"] = scannerStatuses
+		
+		// 检查是否有不健康的扫描器
+		allHealthy := true
+		for _, status := range scannerStatuses {
+			if !status.IsHealthy {
+				allHealthy = false
+				break
+			}
+		}
+		if !allHealthy {
+			response["status"] = "degraded"
+		}
+	}
+	
+	c.JSON(200, response)
 }
 
 // corsMiddleware CORS 中间件

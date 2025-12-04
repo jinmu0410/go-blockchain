@@ -26,6 +26,16 @@ func NewReorgDetector(chain domain.ChainType, repos store.BlockRepository, fetch
 	}
 }
 
+// SetReorgHandler 设置重组处理器
+func (d *ReorgDetector) SetReorgHandler(handler ReorgHandler) {
+	d.reorgHandler = handler
+}
+
+// SetBlockFetcher 设置区块获取器
+func (d *ReorgDetector) SetBlockFetcher(fetcher BlockFetcher) {
+	d.fetcher = fetcher
+}
+
 // CheckBlock 检查新区块是否发生重组
 // 逻辑：
 // 1. 从数据库获取上一个区块（height = newBlock.Height - 1）
@@ -125,7 +135,7 @@ func (d *ReorgDetector) CheckBlock(ctx context.Context, newBlock BlockInfo) (boo
 // 4. 如果不一致，继续往上查找 N-2, N-3...
 // 5. 直到找到 hash 一致的区块，这就是分叉点
 // 6. 返回分叉点的下一个高度（重组开始的区块高度）
-func (d *ReorgDetector) findForkPoint(ctx context.Context, newBlock BlockInfo, latestBlock store.BlockInfo) (uint64, error) {
+func (d *ReorgDetector) findForkPoint(ctx context.Context, newBlock BlockInfo, latestBlockInfo store.BlockInfo) (uint64, error) {
 	// 从新区块的父区块开始往上查找（newBlock.Height - 1）
 	currentHeight := newBlock.Height - 1
 
@@ -135,8 +145,8 @@ func (d *ReorgDetector) findForkPoint(ctx context.Context, newBlock BlockInfo, l
 
 	// 限制查找范围：不能低于数据库中最老区块的高度
 	minHeight := uint64(0)
-	if latestBlock.Height > maxDepth {
-		minHeight = latestBlock.Height - maxDepth
+	if latestBlockInfo.Height > maxDepth {
+		minHeight = latestBlockInfo.Height - maxDepth
 	}
 
 	for searched < maxDepth && currentHeight >= minHeight {
@@ -147,7 +157,7 @@ func (d *ReorgDetector) findForkPoint(ctx context.Context, newBlock BlockInfo, l
 		}
 
 		// 步骤2: 从数据库获取当前高度的区块
-		dbBlock, err := d.repos.GetBlock(ctx, d.chain, currentHeight)
+		dbBlockInfo, err := d.repos.GetBlock(ctx, d.chain, currentHeight)
 		if err != nil {
 			// 如果数据库中不存在该高度的区块，继续往上查找
 			currentHeight--
@@ -156,7 +166,7 @@ func (d *ReorgDetector) findForkPoint(ctx context.Context, newBlock BlockInfo, l
 		}
 
 		// 步骤3: 比较链上的 hash 和数据库的 hash
-		if chainBlock.Hash == dbBlock.Hash {
+		if chainBlock.Hash == dbBlockInfo.Hash {
 			// 找到了匹配的区块，这就是分叉点
 			// 分叉点就是 currentHeight，重组从 currentHeight+1 开始
 			return currentHeight + 1, nil
@@ -168,9 +178,9 @@ func (d *ReorgDetector) findForkPoint(ctx context.Context, newBlock BlockInfo, l
 	}
 
 	// 如果找不到匹配点，说明重组深度很大，返回一个安全的分叉点
-	// 使用 latestBlock.Height + 1 作为分叉点（回滚所有新区块）
-	if latestBlock.Height > 0 {
-		return latestBlock.Height + 1, nil
+	// 使用 latestBlockInfo.Height + 1 作为分叉点（回滚所有新区块）
+	if latestBlockInfo.Height > 0 {
+		return latestBlockInfo.Height + 1, nil
 	}
 
 	return 0, fmt.Errorf("failed to find fork point after searching %d blocks", maxDepth)
