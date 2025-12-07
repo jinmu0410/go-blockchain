@@ -22,12 +22,17 @@ type Manager struct {
 	balances    store.BalanceRepository
 	deposits    store.DepositRepository
 	withdrawals store.WithdrawalRepository
+	addressPool store.AddressPoolRepository
 	risk        risk.Controller
 	signer      signer.Signer
 	notifier    *notification.Manager // 通知管理器（可选）
 
 	scannersMu sync.RWMutex
 	scanners   map[domain.ChainType]scanner.Scanner
+	
+	// 地址池配置
+	poolMinThreshold int // 地址池最小阈值，低于此值自动生成
+	poolBatchSize    int // 每次批量生成的地址数量
 }
 
 // Option 自定义 Manager 行为
@@ -51,14 +56,17 @@ func WithNotifier(n *notification.Manager) Option {
 // NewManager 创建新的钱包管理器
 func NewManager(repos store.RepositoryProvider, opts ...Option) *Manager {
 	mgr := &Manager{
-		assets:      repos,
-		accounts:    repos,
-		balances:    repos,
-		deposits:    repos,
-		withdrawals: repos,
-		risk:        risk.NoopController{},
-		signer:      signer.NoopSigner{},
-		scanners:    make(map[domain.ChainType]scanner.Scanner),
+		assets:          repos,
+		accounts:        repos,
+		balances:        repos,
+		deposits:        repos,
+		withdrawals:     repos,
+		addressPool:     repos,
+		risk:            risk.NoopController{},
+		signer:          signer.NoopSigner{},
+		scanners:        make(map[domain.ChainType]scanner.Scanner),
+		poolMinThreshold: 10, // 默认最小阈值10个
+		poolBatchSize:    50, // 默认每次生成50个
 	}
 	for _, opt := range opts {
 		opt(mgr)
@@ -92,13 +100,30 @@ func (m *Manager) EnsureAccount(ctx context.Context, userID string, assetSymbol 
 	if err == nil {
 		return account, nil
 	}
-	address, err := m.signer.GenerateAddress(ctx, asset.Chain, map[string]string{
-		"user_id": userID,
-		"asset":   assetSymbol,
-	})
-	if err != nil {
-		return domain.WalletAccount{}, err
+	
+	// 尝试从地址池获取地址
+	poolEntry, err := m.addressPool.GetAvailableAddress(ctx, asset.Chain, assetSymbol)
+	var address string
+	if err == nil {
+		// 从地址池获取成功，标记为已使用
+		address = poolEntry.Address
+		if err := m.addressPool.MarkAddressUsed(ctx, poolEntry.ID); err != nil {
+			// 标记失败，但继续使用地址
+			fmt.Printf("Warning: failed to mark address as used: %v\n", err)
+		}
+		// 检查地址池是否需要补充
+		go m.checkAndRefillPool(context.Background(), asset.Chain, assetSymbol)
+	} else {
+		// 地址池为空，实时生成
+		address, err = m.signer.GenerateAddress(ctx, asset.Chain, map[string]string{
+			"user_id": userID,
+			"asset":   assetSymbol,
+		})
+		if err != nil {
+			return domain.WalletAccount{}, err
+		}
 	}
+	
 	account = domain.WalletAccount{
 		UserID:      userID,
 		AssetSymbol: assetSymbol,
@@ -110,6 +135,24 @@ func (m *Manager) EnsureAccount(ctx context.Context, userID string, assetSymbol 
 		return domain.WalletAccount{}, err
 	}
 	return account, nil
+}
+
+// checkAndRefillPool 检查地址池并自动补充
+func (m *Manager) checkAndRefillPool(ctx context.Context, chain domain.ChainType, assetSymbol string) {
+	count, err := m.addressPool.CountAddresses(ctx, chain, assetSymbol, domain.AddressPoolAvailable)
+	if err != nil {
+		fmt.Printf("Error checking address pool count: %v\n", err)
+		return
+	}
+	
+	if count < m.poolMinThreshold {
+		// 地址池不足，批量生成
+		if err := m.GenerateAddressBatch(ctx, chain, assetSymbol, m.poolBatchSize); err != nil {
+			fmt.Printf("Error refilling address pool: %v\n", err)
+		} else {
+			fmt.Printf("Address pool refilled: generated %d addresses for %s:%s\n", m.poolBatchSize, chain, assetSymbol)
+		}
+	}
 }
 
 // RegisterScanner 注册区块链扫描器
@@ -412,6 +455,76 @@ func (m *Manager) RollbackDeposit(ctx context.Context, record domain.DepositReco
 	// 更新充值记录状态
 	record.Status = domain.DepositFailed
 	return m.deposits.UpdateDeposit(ctx, record)
+}
+
+// GenerateAddressBatch 批量生成地址并添加到地址池
+func (m *Manager) GenerateAddressBatch(ctx context.Context, chain domain.ChainType, assetSymbol string, count int) error {
+	// 验证资产是否存在
+	_, err := m.assets.GetAsset(ctx, assetSymbol)
+	if err != nil {
+		return fmt.Errorf("asset not found: %w", err)
+	}
+	
+	for i := 0; i < count; i++ {
+		// 使用唯一的metadata生成地址
+		// 使用pool作为user_id前缀，加上时间戳和索引确保唯一性
+		poolUserID := fmt.Sprintf("pool_%d_%d", time.Now().UnixNano(), i)
+		metadata := map[string]string{
+			"user_id":   poolUserID,
+			"asset":     assetSymbol,
+			"pool":      "true",
+			"batch_id":  fmt.Sprintf("%d", time.Now().UnixNano()),
+			"index":     fmt.Sprintf("%d", i),
+		}
+		
+		address, err := m.signer.GenerateAddress(ctx, chain, metadata)
+		if err != nil {
+			return fmt.Errorf("failed to generate address %d: %w", i, err)
+		}
+		
+		entry := domain.AddressPoolEntry{
+			ID:          fmt.Sprintf("%s:%s:%d", chain, assetSymbol, time.Now().UnixNano()+int64(i)),
+			Chain:       chain,
+			AssetSymbol: assetSymbol,
+			Address:     address,
+			Status:      domain.AddressPoolAvailable,
+			CreatedAt:   time.Now(),
+			Metadata:    metadata,
+		}
+		
+		if err := m.addressPool.AddAddress(ctx, entry); err != nil {
+			return fmt.Errorf("failed to add address to pool: %w", err)
+		}
+	}
+	
+	return nil
+}
+
+// ListAddressPool 列出地址池中的地址
+func (m *Manager) ListAddressPool(ctx context.Context, chain domain.ChainType, assetSymbol string, status domain.AddressPoolStatus, limit, offset int) ([]domain.AddressPoolEntry, error) {
+	return m.addressPool.ListAddresses(ctx, chain, assetSymbol, status, limit, offset)
+}
+
+// GetAddressPoolStats 获取地址池统计信息
+func (m *Manager) GetAddressPoolStats(ctx context.Context, chain domain.ChainType, assetSymbol string) (map[string]int, error) {
+	available, err := m.addressPool.CountAddresses(ctx, chain, assetSymbol, domain.AddressPoolAvailable)
+	if err != nil {
+		return nil, err
+	}
+	used, err := m.addressPool.CountAddresses(ctx, chain, assetSymbol, domain.AddressPoolUsed)
+	if err != nil {
+		return nil, err
+	}
+	total, err := m.addressPool.CountAddresses(ctx, chain, assetSymbol, "")
+	if err != nil {
+		return nil, err
+	}
+	
+	return map[string]int{
+		"available": available,
+		"used":      used,
+		"total":     total,
+	}, nil
 }
 
 func mergeStringMap(target map[string]string, source map[string]string) map[string]string {

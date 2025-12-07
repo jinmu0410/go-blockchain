@@ -40,7 +40,7 @@ func (r *Router) SetupRoutes() *gin.Engine {
 		r.setupBalanceRoutes(v1)
 		r.setupDepositRoutes(v1)
 		r.setupWithdrawalRoutes(v1)
-		r.setupRiskRoutes(v1)
+		// 注意：风控路由已移到admin路由组
 	}
 
 	// 认证路由（必须在静态文件之前）
@@ -55,21 +55,52 @@ func (r *Router) SetupRoutes() *gin.Engine {
 	admin.Use(handlers.VerifyToken())
 	{
 		r.setupAdminRoutes(admin)
+		r.setupRiskRoutes(admin) // 风控路由移到admin组，需要认证
 	}
 
 	// 静态文件服务（管理后台前端）
 	// 使用单独的路径避免与 API 路由冲突
 	adminGroup := router.Group("/admin")
 	{
-		// 首页
+		// 静态资源（CSS、JS 等）- 必须在路由之前
+		adminGroup.Static("/assets", "./web/admin/dist/assets")
+		adminGroup.StaticFile("/vite.svg", "./web/admin/dist/vite.svg")
+		
+		// SPA路由：所有非API路由都返回index.html
 		adminGroup.GET("", func(c *gin.Context) {
-			c.File("./web/admin/index.html")
+			c.File("./web/admin/dist/index.html")
 		})
 		adminGroup.GET("/", func(c *gin.Context) {
-			c.File("./web/admin/index.html")
+			c.File("./web/admin/dist/index.html")
 		})
-		// 静态资源（CSS、JS 等）
-		adminGroup.Static("/static", "./web/admin")
+		// 支持前端路由
+		adminGroup.GET("/dashboard", func(c *gin.Context) {
+			c.File("./web/admin/dist/index.html")
+		})
+		adminGroup.GET("/deposits", func(c *gin.Context) {
+			c.File("./web/admin/dist/index.html")
+		})
+		adminGroup.GET("/withdrawals", func(c *gin.Context) {
+			c.File("./web/admin/dist/index.html")
+		})
+		adminGroup.GET("/accounts", func(c *gin.Context) {
+			c.File("./web/admin/dist/index.html")
+		})
+		adminGroup.GET("/assets", func(c *gin.Context) {
+			c.File("./web/admin/dist/index.html")
+		})
+		adminGroup.GET("/risk", func(c *gin.Context) {
+			c.File("./web/admin/dist/index.html")
+		})
+		adminGroup.GET("/address-pool", func(c *gin.Context) {
+			c.File("./web/admin/dist/index.html")
+		})
+		adminGroup.GET("/settings", func(c *gin.Context) {
+			c.File("./web/admin/dist/index.html")
+		})
+		adminGroup.GET("/login", func(c *gin.Context) {
+			c.File("./web/admin/dist/index.html")
+		})
 	}
 
 	return router
@@ -154,6 +185,7 @@ func (r *Router) setupRiskRoutes(group *gin.RouterGroup) {
 // setupAdminRoutes 设置后台管理路由
 func (r *Router) setupAdminRoutes(group *gin.RouterGroup) {
 	handler := handlers.NewAdminHandler(r.manager)
+	poolHandler := handlers.NewAddressPoolHandler(r.manager)
 	
 	// 交易管理
 	transactions := group.Group("/transactions")
@@ -182,6 +214,14 @@ func (r *Router) setupAdminRoutes(group *gin.RouterGroup) {
 	{
 		assets.GET("", handler.ListAssets)
 		assets.POST("", handler.RegisterAsset)
+	}
+	
+	// 地址池管理
+	addressPool := group.Group("/address-pool")
+	{
+		addressPool.GET("", poolHandler.ListAddresses)
+		addressPool.GET("/stats", poolHandler.GetStats)
+		addressPool.POST("/generate", poolHandler.GenerateAddresses)
 	}
 	
 	// 统计信息

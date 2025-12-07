@@ -134,3 +134,23 @@ type WithdrawalDecision struct {
 	Remarks  string
 	Metadata map[string]string
 }
+
+// AddressPoolEntry 地址池条目
+type AddressPoolEntry struct {
+	ID          string                `json:"id"`
+	Chain       ChainType              `json:"chain"`
+	AssetSymbol string                 `json:"asset_symbol"`
+	Address     string                 `json:"address"`
+	Status      AddressPoolStatus      `json:"status"`
+	CreatedAt   time.Time              `json:"created_at"`
+	UsedAt      *time.Time             `json:"used_at,omitempty"`
+	Metadata    map[string]string      `json:"metadata,omitempty"`
+}
+
+// AddressPoolStatus 地址池状态
+type AddressPoolStatus string
+
+const (
+	AddressPoolAvailable AddressPoolStatus = "available" // 可用
+	AddressPoolUsed      AddressPoolStatus = "used"      // 已使用
+)

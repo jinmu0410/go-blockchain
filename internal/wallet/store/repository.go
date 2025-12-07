@@ -87,6 +87,22 @@ type BlockInfo struct {
 	CreatedAt  time.Time
 }
 
+// AddressPoolRepository 地址池存储
+type AddressPoolRepository interface {
+	// AddAddress 添加地址到池中
+	AddAddress(ctx context.Context, entry domain.AddressPoolEntry) error
+	// GetAvailableAddress 获取一个可用地址（按链和资产）
+	GetAvailableAddress(ctx context.Context, chain domain.ChainType, assetSymbol string) (domain.AddressPoolEntry, error)
+	// MarkAddressUsed 标记地址为已使用
+	MarkAddressUsed(ctx context.Context, id string) error
+	// ListAddresses 列出地址池中的地址（支持过滤）
+	ListAddresses(ctx context.Context, chain domain.ChainType, assetSymbol string, status domain.AddressPoolStatus, limit, offset int) ([]domain.AddressPoolEntry, error)
+	// CountAddresses 统计地址数量
+	CountAddresses(ctx context.Context, chain domain.ChainType, assetSymbol string, status domain.AddressPoolStatus) (int, error)
+	// DeleteAddress 删除地址（用于清理）
+	DeleteAddress(ctx context.Context, id string) error
+}
+
 // RepositoryProvider 聚合全部仓储接口
 type RepositoryProvider interface {
 	AssetRepository
@@ -95,4 +111,5 @@ type RepositoryProvider interface {
 	DepositRepository
 	WithdrawalRepository
 	BlockRepository
+	AddressPoolRepository
 }

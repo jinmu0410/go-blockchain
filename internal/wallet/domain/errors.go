@@ -14,4 +14,6 @@ var (
 	ErrWithdrawalRejected = errors.New("wallet: withdrawal rejected by risk control")
 	ErrWithdrawalPending  = errors.New("wallet: withdrawal already in pending state")
 	ErrSignerUnavailable  = errors.New("wallet: signer unavailable")
+	ErrAddressPoolEmpty   = errors.New("wallet: address pool is empty")
+	ErrAddressPoolNotFound = errors.New("wallet: address pool entry not found")
 )

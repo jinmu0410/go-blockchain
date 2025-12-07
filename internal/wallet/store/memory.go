@@ -18,9 +18,11 @@ type InMemoryStore struct {
 	balances     map[string]map[string]*domain.Balance
 	deposits     map[string]domain.DepositRecord
 	withdrawals  map[string]domain.WithdrawalRequest
-	addresses    map[string]string           // address -> accountKey
-	blocks       map[string]BlockInfo        // chain:height -> BlockInfo
-	latestBlocks map[domain.ChainType]uint64 // chain -> latest height
+	addresses    map[string]string                  // address -> accountKey
+	blocks       map[string]BlockInfo               // chain:height -> BlockInfo
+	latestBlocks map[domain.ChainType]uint64        // chain -> latest height
+	addressPool  map[string]domain.AddressPoolEntry // id -> AddressPoolEntry
+	poolIndex    map[string][]string                // chain:asset -> []id (available addresses)
 }
 
 // NewInMemoryStore 创建内存仓储
@@ -34,6 +36,8 @@ func NewInMemoryStore() *InMemoryStore {
 		addresses:    make(map[string]string),
 		blocks:       make(map[string]BlockInfo),
 		latestBlocks: make(map[domain.ChainType]uint64),
+		addressPool:  make(map[string]domain.AddressPoolEntry),
+		poolIndex:    make(map[string][]string),
 	}
 }
 
@@ -502,5 +506,181 @@ func (s *InMemoryStore) DeleteBlocksFromHeight(ctx context.Context, chain domain
 	} else {
 		delete(s.latestBlocks, chain)
 	}
+	return nil
+}
+
+func (s *InMemoryStore) poolKey(chain domain.ChainType, assetSymbol string) string {
+	return string(chain) + ":" + assetSymbol
+}
+
+// AddAddress implements AddressPoolRepository
+func (s *InMemoryStore) AddAddress(ctx context.Context, entry domain.AddressPoolEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if entry.ID == "" {
+		return fmt.Errorf("address pool entry ID is required")
+	}
+	if entry.Status == "" {
+		entry.Status = domain.AddressPoolAvailable
+	}
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = time.Now()
+	}
+
+	s.addressPool[entry.ID] = entry
+	if entry.Status == domain.AddressPoolAvailable {
+		key := s.poolKey(entry.Chain, entry.AssetSymbol)
+		s.poolIndex[key] = append(s.poolIndex[key], entry.ID)
+	}
+	return nil
+}
+
+// GetAvailableAddress implements AddressPoolRepository
+func (s *InMemoryStore) GetAvailableAddress(ctx context.Context, chain domain.ChainType, assetSymbol string) (domain.AddressPoolEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := s.poolKey(chain, assetSymbol)
+	ids, ok := s.poolIndex[key]
+	if !ok || len(ids) == 0 {
+		return domain.AddressPoolEntry{}, domain.ErrAddressPoolEmpty
+	}
+
+	// 获取第一个可用地址
+	id := ids[0]
+	entry, ok := s.addressPool[id]
+	if !ok {
+		// 清理无效索引
+		s.poolIndex[key] = ids[1:]
+		return domain.AddressPoolEntry{}, domain.ErrAddressPoolNotFound
+	}
+
+	// 从索引中移除
+	s.poolIndex[key] = ids[1:]
+
+	return entry, nil
+}
+
+// MarkAddressUsed implements AddressPoolRepository
+func (s *InMemoryStore) MarkAddressUsed(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.addressPool[id]
+	if !ok {
+		return domain.ErrAddressPoolNotFound
+	}
+
+	entry.Status = domain.AddressPoolUsed
+	now := time.Now()
+	entry.UsedAt = &now
+
+	s.addressPool[id] = entry
+
+	// 从可用索引中移除
+	key := s.poolKey(entry.Chain, entry.AssetSymbol)
+	ids := s.poolIndex[key]
+	for i, eid := range ids {
+		if eid == id {
+			s.poolIndex[key] = append(ids[:i], ids[i+1:]...)
+			break
+		}
+	}
+
+	return nil
+}
+
+// ListAddresses implements AddressPoolRepository
+func (s *InMemoryStore) ListAddresses(ctx context.Context, chain domain.ChainType, assetSymbol string, status domain.AddressPoolStatus, limit, offset int) ([]domain.AddressPoolEntry, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	results := make([]domain.AddressPoolEntry, 0)
+
+	for _, entry := range s.addressPool {
+		// 按链过滤
+		if chain != "" && entry.Chain != chain {
+			continue
+		}
+		// 按资产过滤
+		if assetSymbol != "" && entry.AssetSymbol != assetSymbol {
+			continue
+		}
+		// 按状态过滤
+		if status != "" && entry.Status != status {
+			continue
+		}
+
+		results = append(results, entry)
+	}
+
+	// 按创建时间倒序排序
+	for i := 0; i < len(results)-1; i++ {
+		for j := i + 1; j < len(results); j++ {
+			if results[i].CreatedAt.Before(results[j].CreatedAt) {
+				results[i], results[j] = results[j], results[i]
+			}
+		}
+	}
+
+	// 应用分页
+	if offset > len(results) {
+		return []domain.AddressPoolEntry{}, nil
+	}
+	end := offset + limit
+	if end > len(results) {
+		end = len(results)
+	}
+	if limit <= 0 {
+		end = len(results)
+	}
+
+	return results[offset:end], nil
+}
+
+// CountAddresses implements AddressPoolRepository
+func (s *InMemoryStore) CountAddresses(ctx context.Context, chain domain.ChainType, assetSymbol string, status domain.AddressPoolStatus) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	count := 0
+	for _, entry := range s.addressPool {
+		if chain != "" && entry.Chain != chain {
+			continue
+		}
+		if assetSymbol != "" && entry.AssetSymbol != assetSymbol {
+			continue
+		}
+		if status != "" && entry.Status != status {
+			continue
+		}
+		count++
+	}
+	return count, nil
+}
+
+// DeleteAddress implements AddressPoolRepository
+func (s *InMemoryStore) DeleteAddress(ctx context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.addressPool[id]
+	if !ok {
+		return domain.ErrAddressPoolNotFound
+	}
+
+	delete(s.addressPool, id)
+
+	// 从索引中移除
+	key := s.poolKey(entry.Chain, entry.AssetSymbol)
+	ids := s.poolIndex[key]
+	for i, eid := range ids {
+		if eid == id {
+			s.poolIndex[key] = append(ids[:i], ids[i+1:]...)
+			break
+		}
+	}
+
 	return nil
 }

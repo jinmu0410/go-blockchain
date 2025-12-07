@@ -1,162 +1,213 @@
-# 后台管理系统使用指南
+# 区块链钱包管理系统 - 前端
 
-## 启动方式
+现代化的管理后台前端应用，使用 React + TypeScript + Vite + Ant Design 构建。
 
-### 1. 启动后端服务
+## 🚀 快速开始
+
+### 安装依赖
 
 ```bash
-cd cmd/server
-go run main.go
+cd web/admin
+npm install
 ```
 
-服务启动后，管理后台可通过以下地址访问：
-- 前端界面: http://localhost:8081/admin
-- API 接口: http://localhost:8081/admin/api/v1
+### 开发模式
 
-### 2. 访问管理后台
+```bash
+npm run dev
+```
 
-在浏览器中打开：`http://localhost:8081/admin`
+前端开发服务器将在 `http://localhost:3000` 启动，并自动代理后端API请求到 `http://localhost:8081`。
 
-## 登录信息
+### 构建生产版本
 
-**默认账号：**
-- 用户名: `admin`
-- 密码: `admin123`
+```bash
+npm run build
+```
+
+构建产物将输出到 `dist` 目录。
+
+### 预览生产构建
+
+```bash
+npm run preview
+```
+
+## 📁 项目结构
+
+```
+web/admin/
+├── src/
+│   ├── components/      # 公共组件
+│   │   ├── Layout.tsx   # 主布局组件
+│   │   └── PrivateRoute.tsx  # 路由守卫
+│   ├── pages/           # 页面组件
+│   │   ├── Login.tsx    # 登录页
+│   │   ├── Dashboard.tsx    # 统计概览
+│   │   ├── Deposits.tsx     # 充值管理
+│   │   ├── Withdrawals.tsx  # 提现管理
+│   │   ├── Accounts.tsx     # 账号管理
+│   │   ├── Assets.tsx       # 资产管理
+│   │   ├── Risk.tsx         # 风控管理
+│   │   └── Settings.tsx     # 系统设置
+│   ├── stores/          # 状态管理
+│   │   └── authStore.ts # 认证状态
+│   ├── utils/           # 工具函数
+│   │   └── api.ts       # API客户端
+│   ├── App.tsx          # 根组件
+│   └── main.tsx         # 入口文件
+├── index.html
+├── package.json
+├── vite.config.ts
+└── tsconfig.json
+```
+
+## 🔐 登录信息
+
+默认账号：
+- 用户名：`admin`
+- 密码：`admin123`
 
 ⚠️ **生产环境必须修改默认密码！**
 
-## 功能模块
+## 🎨 功能模块
 
 ### 1. 统计概览
-- 总用户数
-- 资产种类
-- 总充值数
-- 总提现数
+- 资产种类统计
+- 充值数据统计
+- 状态和链分布图表
+- 资产统计表格
 
 ### 2. 充值管理
-- 查看所有充值记录
+- 充值记录查询（支持用户ID、资产、状态筛选）
 - 手动确认充值入账
-- 查看充值状态
+- 充值状态和确认数显示
 
 ### 3. 提现管理
-- 查看所有提现记录
-- 审批提现请求
-- 拒绝提现请求
-- 查看风控评分
+- 提现记录查询
+- 审批/拒绝提现请求
+- 风控评分显示
 
 ### 4. 账号管理
-- 搜索用户账户
-- 查看账户余额
-- 调整余额（增加/减少/冻结/解冻）
+- 用户账户搜索
+- 余额查询（可用/冻结/待处理）
+- 余额调整（增加/减少/冻结/解冻）
 
 ### 5. 资产管理
-- 查看所有资产
+- 资产列表查看
 - 添加新资产
 
 ### 6. 风控管理
-- 管理白名单
-- 管理黑名单
-- 配置风控参数
+- 白名单管理
+- 黑名单管理
+- 风控配置
 
-## API 认证
+### 7. 系统设置
+- 基本设置
+- 功能开关
+- 安全配置
 
-所有管理后台 API 都需要 JWT Token 认证。
+## 🔧 配置
 
-### 获取 Token
+### API代理配置
+
+在 `vite.config.ts` 中配置了API代理：
+
+```typescript
+server: {
+  proxy: {
+    '/admin/api': {
+      target: 'http://localhost:8081',
+      changeOrigin: true,
+    },
+  },
+}
+```
+
+### 环境变量
+
+可以创建 `.env` 文件配置环境变量：
+
+```env
+VITE_API_BASE_URL=http://localhost:8081
+```
+
+## 📦 技术栈
+
+- **React 18** - UI框架
+- **TypeScript** - 类型安全
+- **Vite** - 构建工具
+- **Ant Design 5** - UI组件库
+- **React Router 6** - 路由管理
+- **Zustand** - 状态管理
+- **Axios** - HTTP客户端
+- **Day.js** - 日期处理
+
+## 🛠️ 开发指南
+
+### 添加新页面
+
+1. 在 `src/pages/` 创建新页面组件
+2. 在 `src/App.tsx` 中添加路由
+3. 在 `src/components/Layout.tsx` 中添加菜单项
+
+### API调用
+
+使用 `src/utils/api.ts` 中的 `api` 实例：
+
+```typescript
+import api from '@/utils/api'
+
+// GET请求
+const response = await api.get('/v1/statistics')
+
+// POST请求
+await api.post('/v1/assets', data)
+```
+
+### 状态管理
+
+使用 Zustand 进行状态管理：
+
+```typescript
+import { useAuthStore } from '@/stores/authStore'
+
+const token = useAuthStore((state) => state.token)
+const login = useAuthStore((state) => state.login)
+```
+
+## 🚢 部署
+
+### 构建并部署到后端
+
+构建后的文件可以部署到后端的 `web/admin/dist` 目录，后端会自动提供静态文件服务。
 
 ```bash
-curl -X POST http://localhost:8081/admin/api/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "admin",
-    "password": "admin123"
-  }'
+npm run build
+cp -r dist/* ../web/admin/
 ```
 
-响应：
-```json
-{
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "expires_at": "2024-01-02T12:00:00Z"
+### 独立部署
+
+也可以将前端独立部署到Nginx等Web服务器：
+
+```nginx
+server {
+    listen 80;
+    server_name admin.example.com;
+    root /path/to/dist;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /admin/api {
+        proxy_pass http://backend:8081;
+    }
 }
 ```
 
-### 使用 Token
+## 📝 License
 
-```bash
-curl http://localhost:8081/admin/api/v1/statistics \
-  -H "Authorization: Bearer YOUR_TOKEN"
-```
-
-## 修改默认密码
-
-### 方式一：修改代码
-
-编辑 `internal/api/handlers/auth.go`：
-
-```go
-// 修改登录验证逻辑
-if req.Username == "admin" && req.Password == "your-new-password" {
-    // ...
-}
-```
-
-### 方式二：使用环境变量（推荐）
-
-1. 在 `internal/config/config.go` 添加配置
-2. 从环境变量读取用户名密码
-3. 支持多用户管理
-
-## 安全建议
-
-1. **修改默认密码**：生产环境必须修改
-2. **使用 HTTPS**：生产环境启用 HTTPS
-3. **JWT Secret**：修改 `jwtSecret` 变量
-4. **Token 过期时间**：根据需要调整过期时间
-5. **IP 白名单**：限制管理后台访问 IP
-6. **审计日志**：记录所有管理操作
-
-## 开发扩展
-
-### 添加新功能模块
-
-1. 在 `internal/api/handlers/admin.go` 添加处理函数
-2. 在 `internal/api/router.go` 添加路由
-3. 在前端 `web/admin/index.html` 添加界面
-
-### 集成数据库用户管理
-
-```go
-type User struct {
-    Username string
-    Password string // 应该存储哈希值
-    Role     string
-}
-
-func (h *AuthHandler) Login(c *gin.Context) {
-    // 从数据库查询用户
-    // 验证密码哈希
-    // 生成 token
-}
-```
-
-## 故障排查
-
-### 无法访问管理后台
-
-1. 检查服务是否启动：`curl http://localhost:8081/health`
-2. 检查端口是否正确
-3. 查看浏览器控制台错误
-
-### 登录失败
-
-1. 确认用户名密码正确
-2. 检查后端日志
-3. 确认 JWT Secret 配置正确
-
-### API 返回 401
-
-1. 检查 Token 是否过期
-2. 确认请求头包含 Authorization
-3. 重新登录获取新 Token
-
+MIT
